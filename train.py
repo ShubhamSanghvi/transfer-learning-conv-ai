@@ -19,7 +19,7 @@ from ignite.contrib.handlers.tensorboard_logger import TensorboardLogger, Output
 from transformers import (AdamW, OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer,
                                   GPT2DoubleHeadsModel, GPT2Tokenizer, WEIGHTS_NAME, CONFIG_NAME)
 
-from utils import get_dataset, make_logdir
+from utils import get_dataset, make_logdir, get_dataset_friends
 
 SPECIAL_TOKENS = ["<bos>", "<eos>", "<speaker1>", "<speaker2>", "<pad>"]
 ATTR_TO_SPECIAL_TOKEN = {'bos_token': '<bos>', 'eos_token': '<eos>', 'pad_token': '<pad>',
@@ -63,9 +63,34 @@ def build_input_from_segments(persona, history, reply, tokenizer, lm_labels=Fals
     instance["token_type_ids"] = [speaker2 if i % 2 else speaker1 for i, s in enumerate(sequence) for _ in s]
     instance["mc_token_ids"] = len(instance["input_ids"]) - 1
     instance["lm_labels"] = [-100] * len(instance["input_ids"])
+
     if lm_labels:
         instance["lm_labels"] = ([-100] * sum(len(s) for s in sequence[:-1])) + [-100] + sequence[-1][1:]
+
     return instance
+
+def build_input_from_segments_friends(history, h_speakers, character, reply, tokenizer, lm_labels=False, with_eos=True):
+    """ Build a sequence of input from 3 segments: persona, history and last reply. """
+
+    eos, speaker1, speaker2 = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[1:-1])
+
+    speakers = [sp==character for sp in h_speakers]
+    sequence = history + [reply + ([eos] if with_eos else [])]
+    speakers.append(True)
+
+    sequence = [[speaker1 if speakers[i] else speaker2] + s for i, s in enumerate(sequence)]
+    
+    instance = {}
+    instance["input_ids"] = list(chain(*sequence))
+    instance["token_type_ids"] = [speaker1 if speakers[i] else speaker2 for i, s in enumerate(sequence) for _ in s]
+    instance["mc_token_ids"] = len(instance["input_ids"]) - 1
+    instance["lm_labels"] = [-100] * len(instance["input_ids"])
+    if lm_labels:
+        instance["lm_labels"] = ([-100] * sum(len(s) for s in sequence[:-1])) + [-100] + sequence[-1][1:]
+
+    print(instance)
+    return instance
+
 
 
 def get_data_loaders(args, tokenizer):
@@ -91,6 +116,53 @@ def get_data_loaders(args, tokenizer):
                     datasets[dataset_name]["mc_labels"].append(num_candidates - 1)
                     datasets[dataset_name]["n_candidates"] = num_candidates
                 persona = [persona[-1]] + persona[:-1]  # permuted personalities
+
+    logger.info("Pad inputs and convert to Tensor")
+    tensor_datasets = {"train": [], "valid": []}
+    for dataset_name, dataset in datasets.items():
+        dataset = pad_dataset(dataset, padding=tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[-1]))
+        for input_name in MODEL_INPUTS:
+            tensor = torch.tensor(dataset[input_name])
+            if input_name != "mc_labels":
+                tensor = tensor.view((-1, datasets[dataset_name]["n_candidates"]) + tensor.shape[1:])
+            tensor_datasets[dataset_name].append(tensor)
+
+    logger.info("Build train and validation dataloaders")
+    train_dataset, valid_dataset = TensorDataset(*tensor_datasets["train"]), TensorDataset(*tensor_datasets["valid"])
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset) if args.distributed else None
+    valid_sampler = torch.utils.data.distributed.DistributedSampler(valid_dataset) if args.distributed else None
+    train_loader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, shuffle=(not args.distributed))
+    valid_loader = DataLoader(valid_dataset, sampler=valid_sampler, batch_size=args.valid_batch_size, shuffle=False)
+
+    logger.info("Train dataset (Batch, Candidates, Seq length): {}".format(train_dataset.tensors[0].shape))
+    logger.info("Valid dataset (Batch, Candidates, Seq length): {}".format(valid_dataset.tensors[0].shape))
+    return train_loader, valid_loader, train_sampler, valid_sampler
+
+def get_data_loaders_friends(args, tokenizer):
+    """ Prepare the dataset for training and evaluation """
+    # personachat = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
+    friendschat = get_dataset_friends(tokenizer, args.dataset_path, args.dataset_cache)
+    character = "Ross Geller"
+    logger.info("Build inputs and labels")
+    datasets = {"train": defaultdict(list), "valid": defaultdict(list)}
+    for dataset_name, dataset in friendschat.items():
+        if dataset_name == "test":
+            continue
+        print("dataset_name: ", dataset_name)
+        num_candidates = len(dataset[0]["utterances"]["candidates"])
+        if args.num_candidates > 0 and dataset_name == 'train':
+            num_candidates = min(args.num_candidates, num_candidates)
+        for dialog in dataset:
+            utterance = dialog["utterances"]
+            history = utterance["history"][-(2*args.max_history+1):]
+            history_speakers = utterance["history_speakers"][-(2*args.max_history+1):]
+            for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
+                lm_labels = bool(j == num_candidates-1)
+                instance = build_input_from_segments_friends(history, history_speakers, character, candidate, tokenizer, lm_labels)
+                for input_name, input_array in instance.items():
+                    datasets[dataset_name][input_name].append(input_array)
+            datasets[dataset_name]["mc_labels"].append(num_candidates - 1)
+            datasets[dataset_name]["n_candidates"] = num_candidates
 
     logger.info("Pad inputs and convert to Tensor")
     tensor_datasets = {"train": [], "valid": []}
@@ -168,7 +240,7 @@ def train():
         model = DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     logger.info("Prepare datasets")
-    train_loader, val_loader, train_sampler, valid_sampler = get_data_loaders(args, tokenizer)
+    train_loader, val_loader, train_sampler, valid_sampler = get_data_loaders_friends(args, tokenizer)
 
     # Training function and trainer
     def update(engine, batch):
