@@ -88,7 +88,7 @@ def build_input_from_segments_friends(history, h_speakers, character, reply, tok
     if lm_labels:
         instance["lm_labels"] = ([-100] * sum(len(s) for s in sequence[:-1])) + [-100] + sequence[-1][1:]
 
-    print(instance)
+    # print(instance)
     return instance
 
 

@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 
 from transformers import OpenAIGPTLMHeadModel, OpenAIGPTTokenizer, GPT2LMHeadModel, GPT2Tokenizer
-from train import SPECIAL_TOKENS, build_input_from_segments, add_special_tokens_
+from train import SPECIAL_TOKENS, build_input_from_segments_friends, add_special_tokens_
 from utils import get_dataset, download_pretrained_model
 
 def top_filtering(logits, top_k=0., top_p=0.9, threshold=-float('Inf'), filter_value=-float('Inf')):
@@ -55,13 +55,13 @@ def top_filtering(logits, top_k=0., top_p=0.9, threshold=-float('Inf'), filter_v
     return logits
 
 
-def sample_sequence(personality, history, tokenizer, model, args, current_output=None):
+def sample_sequence(history, history_speakers, tokenizer, model, args, current_output=None):
     special_tokens_ids = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS)
     if current_output is None:
         current_output = []
 
     for i in range(args.max_length):
-        instance = build_input_from_segments(personality, history, current_output, tokenizer, with_eos=False)
+        instance = build_input_from_segments_friends(history, history_speakers, args.character, current_output, tokenizer, with_eos=False)
 
         input_ids = torch.tensor(instance["input_ids"], device=args.device).unsqueeze(0)
         token_type_ids = torch.tensor(instance["token_type_ids"], device=args.device).unsqueeze(0)
@@ -95,6 +95,7 @@ def run():
     parser.add_argument("--model_checkpoint", type=str, default="", help="Path, url or short name of the model")
     parser.add_argument("--max_history", type=int, default=2, help="Number of previous utterances to keep in history")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device (cuda or cpu)")
+    parser.add_argument("--character", type=str, default="Ross Geller", help="Friends character to use")
 
     parser.add_argument("--no_sample", action='store_true', help="Set to use greedy decoding instead of sampling")
     parser.add_argument("--max_length", type=int, default=20, help="Maximum length of the output utterances")
@@ -125,27 +126,31 @@ def run():
     logger.info("Get pretrained model and tokenizer")
     tokenizer_class, model_class = (GPT2Tokenizer, GPT2LMHeadModel) if args.model == 'gpt2' else (OpenAIGPTTokenizer, OpenAIGPTLMHeadModel)
     tokenizer = tokenizer_class.from_pretrained(args.model_checkpoint)
+    print(type(tokenizer))
     model = model_class.from_pretrained(args.model_checkpoint)
     model.to(args.device)
     add_special_tokens_(model, tokenizer)
 
-    logger.info("Sample a personality")
-    dataset = get_dataset(tokenizer, args.dataset_path, args.dataset_cache)
-    personalities = [dialog["personality"] for dataset in dataset.values() for dialog in dataset]
-    personality = random.choice(personalities)
-    logger.info("Selected personality: %s", tokenizer.decode(chain(*personality)))
+    # dataset = get_dataset_friends(tokenizer, args.dataset_path, args.dataset_cache)
+    # personalities = [dialog["personality"] for dataset in dataset.values() for dialog in dataset]
+    # personality = random.choice(personalities)
+    # logger.info("Selected personality: %s", tokenizer.decode(chain(*personality)))
 
     history = []
+    history_speakers = []
     while True:
         raw_text = input(">>> ")
         while not raw_text:
             print('Prompt should not be empty!')
             raw_text = input(">>> ")
         history.append(tokenizer.encode(raw_text))
+        history_speakers.append("User")
         with torch.no_grad():
-            out_ids = sample_sequence(personality, history, tokenizer, model, args)
+            out_ids = sample_sequence(history, history_speakers, tokenizer, model, args)
         history.append(out_ids)
+        history_speakers.append(args.character)
         history = history[-(2*args.max_history+1):]
+        history_speakers = history_speakers[-(2*args.max_history+1):]
         out_text = tokenizer.decode(out_ids, skip_special_tokens=True)
         print(out_text)
 
