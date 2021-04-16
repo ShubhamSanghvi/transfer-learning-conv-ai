@@ -155,8 +155,9 @@ def get_data_loaders_friends(args, tokenizer):
             num_candidates = min(args.num_candidates, num_candidates)
         for dialog in dataset:
             utterance = dialog["utterances"]
-            history = utterance["history"][-(2*args.max_history+1):]
-            history_speakers = utterance["history_speakers"][-(2*args.max_history+1):]
+            max_history = min(2*args.max_history, len(utterance["history"]))
+            history = utterance["history"][-max_history:]
+            history_speakers = utterance["history_speakers"][-max_history:]
             for j, candidate in enumerate(utterance["candidates"][-num_candidates:]):
                 lm_labels = bool(j == num_candidates-1)
                 instance = build_input_from_segments_friends(history, history_speakers, character, candidate, tokenizer, lm_labels)

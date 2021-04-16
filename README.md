@@ -1,3 +1,17 @@
+
+# For our group 
+
+python train.py --dataset_path '.\Monica Geller.json' --dataset_cache new1 --character "Monica Geller"
+
+The dataset_path should be sent for all updated datasets with a new dataset_cache name. If you don't pass it, the dataset_cache will be taken as default and that might already be used.
+
+For every change in the dataset, use new dataset_path and dataset_cache.
+
+Default character is "Ross Geller". Please change it for the respective character.
+
+
+
+
 # 🦄 Building a State-of-the-Art Conversational AI with Transfer Learning
 
 The present repo contains the code accompanying the blog post [🦄 How to build a State-of-the-Art Conversational AI with Transfer Learning](https://medium.com/@Thomwolf/how-to-build-a-state-of-the-art-conversational-ai-with-transfer-learning-2d818ac26313).
