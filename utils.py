@@ -62,7 +62,7 @@ def get_dataset_friends(tokenizer, dataset_path, dataset_cache):
     else:
         logger.info("Download dataset from %s", dataset_path)
         # personachat_file = cached_path(dataset_path)
-        friends_dataset_file = "ross_s1.json"
+        friends_dataset_file = dataset_path
         with open(friends_dataset_file, "r", encoding="utf-8") as f:
             dataset = json.loads(f.read())
 
