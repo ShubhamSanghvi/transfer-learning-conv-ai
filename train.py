@@ -73,7 +73,7 @@ def build_input_from_segments_friends(history, h_speakers, character, reply, tok
     """ Build a sequence of input from 3 segments: persona, history and last reply. """
 
     bos, eos, speaker1, speaker2 = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS[:-1])
-    speakers = [sp==character for sp in h_speakers]
+    speakers = [sp==tokenizer.encode(character) for sp in h_speakers]
     sequence = history + [reply + ([eos] if with_eos else [])]
     speakers.append(True)
     sequence = [[bos]] + [[speaker1 if speakers[i] else speaker2] + s for i, s in enumerate(sequence)]
